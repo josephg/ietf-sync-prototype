@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<meta charset="utf8">
+<script>
+
+const makeStateMachineFrom = (stream, applyFn) => {
+  let data = initialData
+  let version = initialVersion
+
+  const listeners = new Set()
+
+  return {
+    get() {
+      return {data, version}
+    },
+
+    subscribeNow() {
+      const stream = streamToIter(() => listeners.delete(stream))
+      stream.append({type: 'snapshot', data, version})
+      listeners.add(stream)
+      return stream
+    },
+
+    subscribeFrom(fromVersion) {
+      if (fromVersion !== version) return this.subscribeNow()
+      else {
+        const stream = streamToIter(() => listeners.delete(stream))
+        listeners.add(stream)
+        return stream.iter
+      }
+    },
+
+    mutate(patch) {
+      data = applyFn(data, patch)
+      version = versionFn(version, data)
+      for (const stream of listeners) {
+        stream.append({type: 'patch', data, version})
+      }
+    }
+  }
+}
+
+
+;(async () => {
+  const res = await fetch('/stream', {
+    method: 'SUBSCRIBE',
+    headers: {
+      'accept-patch': 'text/x-add'
+    }
+  })
+
+  /*
+  
+const simpleMachine = makeStateMachine(
+  1, 1000n,
+  (doc, patch) => doc + patch,
+  v => v + 1
+)
+*/
+  const reader = res.body.getReader()
+  let remainder = ''
+  while (true) {
+    const {value, done} = await reader.read()
+    if (done) break
+    
+    const valStr = remainder + new TextDecoder("utf-8").decode(value)
+    const messages = valStr.split('\n')
+    remainder = messages.pop()
+
+    for (const message in messages) {
+
+    }
+    if (Math.random() < 0.4) {
+      console.log('closing stream')
+      reader.cancel()
+    }
+  }
+})()
+
+</script>

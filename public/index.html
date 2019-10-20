@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<style>
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background-color: #db7735;
+}
+
+textarea {
+  position: fixed;
+  height: calc(100vh - 4em);
+  width: calc(100vw - 4em);
+  margin: 2em;
+  resize: none;
+  padding: 1.2em;
+  border: 5px solid #0f0d6b;
+
+  font-family: monospace;
+  font-size: 16px;
+
+  color: #87001d;
+  background-color: #f9fff9;
+}
+
+textarea:focus {
+  outline: none;
+}
+
+/* #connstatus {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px;
+  font-family: monospace;
+  font-size: 16px;
+  font-weight: bold;
+  background-color: rgba(244, 76, 255, 0.6);
+}
+
+#connstatus.waiting {
+  background-color: red;
+}
+#connstatus.connecting {
+  background-color: yellow;
+}
+
+#connstatus.connected:before {
+  content: 'Connected'
+}
+#connstatus.connecting:before {
+  content: 'Connecting'
+}
+#connstatus.waiting:before {
+  content: 'Not connected! Waiting to reconnect'
+} */
+
+</style>
+<body>
+  <textarea id=content disabled>loading...</textarea>
+  <script src=text.js></script>
+  <script src=es.js></script>
+<script>
+
+// const type = require('ot-text-unicode').type
+const type = textot.type
+const {EventSourcePolyfill} = es
+
+
+const elem = document.getElementById('content')
+if (elem == null) throw Error('Could not find document #content div')
+
+const PATCH_TYPE = 'application/x-text-ot-unicode'
+
+const id = x => x
+let prevvalue = ''
+// Replace the content of the text area with newText, and transform the
+// current cursor by the specified function.
+const replaceText = (newText, transformCursor = id) => {
+  const newSelection = [transformCursor(elem.selectionStart), transformCursor(elem.selectionEnd)]
+
+  // Fixate the window's scroll while we set the element's value. Otherwise
+  // the browser scrolls to the element.
+  const scrollTop = elem.scrollTop
+  elem.value = newText
+  prevvalue = elem.value // Not done on one line so the browser can do newline conversion.
+  if (elem.scrollTop !== scrollTop) elem.scrollTop = scrollTop;
+
+  // Setting the selection moves the cursor. We'll just have to let your
+  // cursor drift if the element isn't active, though usually users don't
+  // care.
+  if (newSelection && window.document.activeElement === elem) {
+    elem.selectionStart = newSelection[0];
+    elem.selectionEnd = newSelection[1];
+  }
+}
+
+// Edit the text in the local textarea
+const localCtx = {
+  insert(pos, text) {
+    const prev = elem.value.replace(/\r\n/g, '\n')
+    replaceText(prev.slice(0, pos) + text + prev.slice(pos),
+      cursor => (cursor > pos) ? (cursor + text.length) : cursor
+    )
+  },
+  remove(pos, length) {
+    const prev = elem.value.replace(/\r\n/g, '\n')
+    replaceText(prev.slice(0, pos) + prev.slice(pos + length),
+      cursor => (cursor > pos) ? (cursor - Math.min(length, cursor-pos)) : cursor
+    )
+  }
+}
+
+// Shamelessly stolen from ShareJS's textarea demo
+// https://github.com/josephg/ShareJS/blob/master/lib/client/textarea.js
+const applyChange = (ctx, oldval, newval) => {
+  if (oldval === newval) return
+
+  let commonStart = 0
+  while (oldval.charAt(commonStart) === newval.charAt(commonStart)) {
+    commonStart++
+  }
+
+  let commonEnd = 0
+  while (oldval.charAt(oldval.length - 1 - commonEnd) === newval.charAt(newval.length - 1 - commonEnd) &&
+      commonEnd + commonStart < oldval.length && commonEnd + commonStart < newval.length) {
+    commonEnd++
+  }
+
+  if (oldval.length !== commonStart + commonEnd) {
+    ctx.remove(commonStart, oldval.length - commonStart - commonEnd)
+  }
+  if (newval.length !== commonStart + commonEnd) {
+    ctx.insert(commonStart, newval.slice(commonStart, newval.length - commonEnd))
+  }
+}
+
+const sendChange = op => {
+  console.log('sendChange', op)
+  return fetch('/doc', {
+    method: 'PATCH',
+    headers: {
+      'content-type': PATCH_TYPE,
+      // 'if-match': 
+    },
+    body: JSON.stringify(op)
+  })
+}
+
+let pendingChange = null
+const append = op => {
+  op = type.normalize(op)
+  pendingChange = pendingChange == null ? op : type.compose(pendingChange, op)
+  // Maybe call flush in a setTimeout(, 0)
+}
+const remoteCtx = {
+  insert(pos, text) { append([pos, text]) },
+  remove(pos, length) { append([pos, {d: length}]) },
+}
+
+const flush = () => {
+  if (pendingChange != null) {
+    sendChange(pendingChange)
+    pendingChange = null
+    // console.log('pc', pendingChange)
+  }
+}
+
+
+;(async () => {
+  const response = await fetch('/doc', {
+    method: 'GET'
+  })
+
+  let version, contents
+
+  await new Promise((resolve, reject) => {
+    // Open event source
+    const e = new EventSourcePolyfill('/doc', {headers: {
+
+    }})
+
+    // e.onopen = resolve
+    e.onmessage = m => {
+      // console.log('es message', m)
+      version = m.lastEventId
+      const data = JSON.parse(m.data)
+      console.log('es data', data)
+      
+      if (data.type === 'snapshot') {
+        contents = data.data
+      } else {
+        // We got a patch
+        contents = type.apply(contents, data.data)
+      }
+
+      resolve()
+    }
+  })
+  // return
+  // let version = response.headers.get('etag')
+  // let contents = await response.text()
+  elem.value = contents
+  
+  ;['textInput', 'keydown', 'keyup', 'select', 'cut', 'paste', 'input'].forEach(eventName => {
+    elem.addEventListener(eventName, e => {
+      setTimeout(() => {
+        if (elem.value !== prevvalue) {
+          prevvalue = elem.value
+          const newvalue = elem.value.replace(/\r\n/g, '\n')
+          applyChange(remoteCtx, contents, newvalue)
+          contents = newvalue
+          flush()
+        }
+      }, 0)
+    }, false)
+  })
+  
+  elem.disabled = false
+  elem.focus()
+
+  // console.log(await ().text())
+})()
+
+</script>

@@ -1,0 +1,16 @@
+{
+  "name": "ietf",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "dependencies": {
+    "body-parser": "^1.19.0",
+    "event-source-polyfill": "^1.0.7",
+    "express": "^4.17.1",
+    "ministreamiterator": "^1.0.0",
+    "ot-text-unicode": "^3.0.0"
+  },
+  "devDependencies": {
+    "parcel": "^1.12.3"
+  }
+}
